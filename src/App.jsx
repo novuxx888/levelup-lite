@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { db, ensureUser } from "./lib/firebase";
+import {
+  collection,
+  addDoc,
+  doc,
+  deleteDoc,
+  updateDoc,
+  onSnapshot,
+  getDocs,
+  writeBatch,
+} from "firebase/firestore";
+
+
 /* ---------- Shared helpers ---------- */
 const uid = () => crypto.randomUUID();
 const cls = (...a) => a.filter(Boolean).join(" ");
@@ -47,33 +60,124 @@ function Card({ title, actions, children }) {
   );
 }
 
-/* ---------- Daily To-Do ---------- */
-const LS_DAILY = "dailyTodos_v1";
+const LS_DAILY = "dailyTodos_v1"; // used once to migrate old localStorage data
+
 function DailyTodo() {
   const [todos, setTodos] = useState([]);
   const [text, setText] = useState("");
+  const [uid, setUid] = useState(null);
 
-  useEffect(() => { try { const raw = localStorage.getItem(LS_DAILY); if (raw) setTodos(JSON.parse(raw)); } catch {} }, []);
-  useEffect(() => { try { localStorage.setItem(LS_DAILY, JSON.stringify(todos)); } catch {} }, [todos]);
+  // Sign in anonymously, migrate local data once, then subscribe to Firestore
+  useEffect(() => {
+    let unsub = () => {};
+    ensureUser().then(async (user) => {
+      setUid(user.uid);
+      const colRef = collection(db, "users", user.uid, "dailyTodos");
 
-  const add = () => { const t = text.trim(); if (!t) return;
-    setTodos((p) => [{ id: uid(), text: t, done: false, createdAt: Date.now() }, ...p]); setText(""); };
-  const toggle = (id) => setTodos((p) => p.map((it) => it.id === id ? { ...it, done: !it.done } : it));
-  const del = (id) => setTodos((p) => p.filter((it) => it.id !== id));
-  const edit = (id, newText) => setTodos((p) => p.map((it) => it.id === id ? { ...it, text: newText } : it));
-  const clearDone = () => setTodos((p) => p.filter((it) => !it.done));
+      // ----- One-time migration: localStorage -> Firestore (if collection is empty)
+      const snap = await getDocs(colRef);
+      if (snap.empty) {
+        const raw = localStorage.getItem(LS_DAILY);
+        if (raw) {
+          const items = JSON.parse(raw);
+          const batch = writeBatch(db);
+          for (const it of items) {
+            // if your old items didn't have createdAt, add it
+            batch.set(doc(colRef), {
+              text: it.text ?? "",
+              done: !!it.done,
+              createdAt: it.createdAt ?? Date.now(),
+              id: undefined, // let Firestore assign id
+            });
+          }
+          await batch.commit();
+        }
+      }
+
+      // ----- Live subscription
+      unsub = onSnapshot(colRef, (qs) => {
+        const data = qs.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (a.createdAt || 0) < (b.createdAt || 0) ? 1 : -1);
+        setTodos(data);
+      });
+    });
+    return () => unsub();
+  }, []);
+
+  // Actions
+  const add = async () => {
+  const t = text.trim();
+  if (!t || !uid) return;
+  await addDoc(collection(db, "users", uid, "dailyTodos"), {
+    text: t,
+    done: false,
+    createdAt: Date.now(),
+  });
+  setText("");
+};
+
+  const toggle = async (id) => {
+    if (!uid) return;
+    const curr = todos.find((x) => x.id === id);
+    if (!curr) return;
+    await updateDoc(doc(db, "users", uid, "dailyTodos", id), {
+      done: !curr.done,
+    });
+  };
+
+  const del = async (id) => {
+    if (!uid) return;
+    await deleteDoc(doc(db, "users", uid, "dailyTodos", id));
+  };
+
+  const edit = async (id, newText) => {
+    if (!uid) return;
+    const t = newText.trim();
+    if (!t) return;
+    await updateDoc(doc(db, "users", uid, "dailyTodos", id), { text: t });
+  };
+
+  const clearDone = async () => {
+    if (!uid) return;
+    const doneOnes = todos.filter((t) => t.done);
+    const batch = writeBatch(db);
+    for (const t of doneOnes) {
+      batch.delete(doc(db, "users", uid, "dailyTodos", t.id));
+    }
+    await batch.commit();
+  };
+
   const remaining = todos.filter((t) => !t.done).length;
 
   return (
-    <Card title={`Daily To-Do (${remaining} left)`} actions={<Button className="text-red-600" onClick={clearDone}>Clear Done</Button>}>
+    <Card
+      title={`Daily To-Do (${remaining} left)`}
+      actions={
+        <Button className="text-red-600" onClick={clearDone}>
+          Clear Done
+        </Button>
+      }
+    >
       <div className="mb-3 flex items-center gap-2">
-        <TextInput placeholder="Add a daily task…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e)=>e.key==="Enter"&&add()} />
+        <TextInput
+          placeholder="Add a daily task…"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
+        />
         <Primary onClick={add}>Add</Primary>
       </div>
-      <List todos={todos} onToggle={toggle} onDelete={del} onEdit={edit} />
+      <List
+        todos={todos}
+        onToggle={toggle}
+        onDelete={del}
+        onEdit={edit}
+      />
     </Card>
   );
 }
+
 
 /* ---------- Weekly To-Do ---------- */
 const LS_WEEKLY = "weeklyTodos_v1";
