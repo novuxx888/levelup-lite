@@ -65,13 +65,13 @@ const LS_DAILY = "dailyTodos_v1"; // used once to migrate old localStorage data
 function DailyTodo() {
   const [todos, setTodos] = useState([]);
   const [text, setText] = useState("");
-  const [uid, setUid] = useState(null);
+  const [userUid, setUserUid] = useState(null);
 
   // Sign in anonymously, migrate local data once, then subscribe to Firestore
   useEffect(() => {
     let unsub = () => {};
     ensureUser().then(async (user) => {
-      setUid(user.uid);
+      setUserUid(user.uid);
       const colRef = collection(db, "users", user.uid, "dailyTodos");
 
       // ----- One-time migration: localStorage -> Firestore (if collection is empty)
@@ -108,8 +108,8 @@ function DailyTodo() {
   // Actions
   const add = async () => {
   const t = text.trim();
-  if (!t || !uid) return;
-  await addDoc(collection(db, "users", uid, "dailyTodos"), {
+  if (!t || !userUid) return;
+  await addDoc(collection(db, "users", userUid, "dailyTodos"), {
     text: t,
     done: false,
     createdAt: Date.now(),
@@ -118,32 +118,32 @@ function DailyTodo() {
 };
 
   const toggle = async (id) => {
-    if (!uid) return;
+    if (!userUid) return;
     const curr = todos.find((x) => x.id === id);
     if (!curr) return;
-    await updateDoc(doc(db, "users", uid, "dailyTodos", id), {
+    await updateDoc(doc(db, "users", userUid, "dailyTodos", id), {
       done: !curr.done,
     });
   };
 
   const del = async (id) => {
-    if (!uid) return;
-    await deleteDoc(doc(db, "users", uid, "dailyTodos", id));
+    if (!userUid) return;
+    await deleteDoc(doc(db, "users", userUid, "dailyTodos", id));
   };
 
   const edit = async (id, newText) => {
-    if (!uid) return;
+    if (!userUid) return;
     const t = newText.trim();
     if (!t) return;
-    await updateDoc(doc(db, "users", uid, "dailyTodos", id), { text: t });
+    await updateDoc(doc(db, "users", userUid, "dailyTodos", id), { text: t });
   };
 
   const clearDone = async () => {
-    if (!uid) return;
+    if (!userUid) return;
     const doneOnes = todos.filter((t) => t.done);
     const batch = writeBatch(db);
     for (const t of doneOnes) {
-      batch.delete(doc(db, "users", uid, "dailyTodos", t.id));
+      batch.delete(doc(db, "users", userUid, "dailyTodos", t.id));
     }
     await batch.commit();
   };
@@ -180,23 +180,89 @@ function DailyTodo() {
 
 
 /* ---------- Weekly To-Do ---------- */
-const LS_WEEKLY = "weeklyTodos_v1";
+const LS_WEEKLY = "weeklyTodos_v1"; // used once to migrate old localStorage data
 const D = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
 function WeeklyTodo() {
   const [todos, setTodos] = useState([]);
   const [text, setText] = useState("");
   const [day, setDay] = useState("any");
+  const [userUid, setUserUid] = useState(null);
 
-  useEffect(() => { try { const raw = localStorage.getItem(LS_WEEKLY); if (raw) setTodos(JSON.parse(raw)); } catch {} }, []);
-  useEffect(() => { try { localStorage.setItem(LS_WEEKLY, JSON.stringify(todos)); } catch {} }, [todos]);
+  // Sign in anonymously, migrate local data once, then subscribe to Firestore
+  useEffect(() => {
+    let unsub = () => {};
+    ensureUser().then(async (user) => {
+      setUserUid(user.uid);
+      const colRef = collection(db, "users", user.uid, "weeklyTodos");
 
-  const add = () => { const t = text.trim(); if (!t) return;
-    setTodos((p) => [{ id: uid(), text: t, dayOfWeek: day, done: false, createdAt: Date.now() }, ...p]); setText(""); };
-  const toggle = (id) => setTodos((p) => p.map((it) => it.id === id ? { ...it, done: !it.done } : it));
-  const del = (id) => setTodos((p) => p.filter((it) => it.id !== id));
-  const edit = (id, newText) => setTodos((p) => p.map((it) => it.id === id ? { ...it, text: newText } : it));
-  const clearDone = () => setTodos((p) => p.filter((it) => !it.done));
+      // ----- One-time migration: localStorage -> Firestore (if collection is empty)
+      const snap = await getDocs(colRef);
+      if (snap.empty) {
+        const raw = localStorage.getItem(LS_WEEKLY);
+        if (raw) {
+          const items = JSON.parse(raw);
+          const batch = writeBatch(db);
+          for (const it of items) {
+            batch.set(doc(colRef), {
+              text: it.text ?? "",
+              dayOfWeek: it.dayOfWeek ?? "any",
+              done: !!it.done,
+              createdAt: it.createdAt ?? Date.now(),
+              id: undefined, // let Firestore assign id
+            });
+          }
+          await batch.commit();
+        }
+      }
+
+      // ----- Live subscription
+      unsub = onSnapshot(colRef, (qs) => {
+        const data = qs.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (a.createdAt || 0) < (b.createdAt || 0) ? 1 : -1);
+        setTodos(data);
+      });
+    });
+    return () => unsub();
+  }, []);
+
+  // Actions
+  const add = () => {
+    alert("Add function called!");
+    console.log("WeeklyTodo add called:", { text, userUid, day });
+  };
+
+  const toggle = async (id) => {
+    if (!userUid) return;
+    const curr = todos.find((x) => x.id === id);
+    if (!curr) return;
+    await updateDoc(doc(db, "users", userUid, "weeklyTodos", id), {
+      done: !curr.done,
+    });
+  };
+
+  const del = async (id) => {
+    if (!userUid) return;
+    await deleteDoc(doc(db, "users", userUid, "weeklyTodos", id));
+  };
+
+  const edit = async (id, newText) => {
+    if (!userUid) return;
+    const t = newText.trim();
+    if (!t) return;
+    await updateDoc(doc(db, "users", userUid, "weeklyTodos", id), { text: t });
+  };
+
+  const clearDone = async () => {
+    if (!userUid) return;
+    const doneOnes = todos.filter((t) => t.done);
+    const batch = writeBatch(db);
+    for (const t of doneOnes) {
+      batch.delete(doc(db, "users", userUid, "weeklyTodos", t.id));
+    }
+    await batch.commit();
+  };
 
   const groups = useMemo(() => {
     const g = { Any: [], Sun: [], Mon: [], Tue: [], Wed: [], Thu: [], Fri: [], Sat: [] };
@@ -209,7 +275,7 @@ function WeeklyTodo() {
 
   return (
     <>
-      <Card title="Add Weekly Task" actions={<Button className="text-red-600" onClick={clearDone}>Clear Done</Button>}>
+      <Card title={`Add Weekly Task (UID: ${userUid ? 'OK' : 'MISSING'}) - Test: ${Math.random()}`} actions={<Button className="text-red-600" onClick={clearDone}>Clear Done</Button>}>
         <div className="flex flex-wrap items-center gap-2">
           <TextInput placeholder="Add a weekly task…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e)=>e.key==="Enter"&&add()} />
           <select className="rounded-xl border border-black/10 px-3 py-2 text-sm" value={day} onChange={(e) => setDay(e.target.value)}>
@@ -233,20 +299,92 @@ function WeeklyTodo() {
 }
 
 /* ---------- Misc To-Do ---------- */
-const LS_MISC = "miscTodos_v1";
+const LS_MISC = "miscTodos_v1"; // used once to migrate old localStorage data
 function MiscTodo() {
   const [todos, setTodos] = useState([]);
   const [text, setText] = useState("");
+  const [userUid, setUserUid] = useState(null);
 
-  useEffect(() => { try { const raw = localStorage.getItem(LS_MISC); if (raw) setTodos(JSON.parse(raw)); } catch {} }, []);
-  useEffect(() => { try { localStorage.setItem(LS_MISC, JSON.stringify(todos)); } catch {} }, [todos]);
+  // Sign in anonymously, migrate local data once, then subscribe to Firestore
+  useEffect(() => {
+    let unsub = () => {};
+    ensureUser().then(async (user) => {
+      setUserUid(user.uid);
+      const colRef = collection(db, "users", user.uid, "miscTodos");
 
-  const add = () => { const t = text.trim(); if (!t) return;
-    setTodos((p) => [{ id: uid(), text: t, done: false, createdAt: Date.now() }, ...p]); setText(""); };
-  const toggle = (id) => setTodos((p) => p.map((it) => it.id === id ? { ...it, done: !it.done } : it));
-  const del = (id) => setTodos((p) => p.filter((it) => it.id !== id));
-  const edit = (id, newText) => setTodos((p) => p.map((it) => it.id === id ? { ...it, text: newText } : it));
-  const clearDone = () => setTodos((p) => p.filter((it) => !it.done));
+      // ----- One-time migration: localStorage -> Firestore (if collection is empty)
+      const snap = await getDocs(colRef);
+      if (snap.empty) {
+        const raw = localStorage.getItem(LS_MISC);
+        if (raw) {
+          const items = JSON.parse(raw);
+          const batch = writeBatch(db);
+          for (const it of items) {
+            batch.set(doc(colRef), {
+              text: it.text ?? "",
+              done: !!it.done,
+              createdAt: it.createdAt ?? Date.now(),
+              id: undefined, // let Firestore assign id
+            });
+          }
+          await batch.commit();
+        }
+      }
+
+      // ----- Live subscription
+      unsub = onSnapshot(colRef, (qs) => {
+        const data = qs.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (a.createdAt || 0) < (b.createdAt || 0) ? 1 : -1);
+        setTodos(data);
+      });
+    });
+    return () => unsub();
+  }, []);
+
+  // Actions
+  const add = async () => {
+    const t = text.trim();
+    if (!t || !userUid) return;
+    await addDoc(collection(db, "users", userUid, "miscTodos"), {
+      text: t,
+      done: false,
+      createdAt: Date.now(),
+    });
+    setText("");
+  };
+
+  const toggle = async (id) => {
+    if (!userUid) return;
+    const curr = todos.find((x) => x.id === id);
+    if (!curr) return;
+    await updateDoc(doc(db, "users", userUid, "miscTodos", id), {
+      done: !curr.done,
+    });
+  };
+
+  const del = async (id) => {
+    if (!userUid) return;
+    await deleteDoc(doc(db, "users", userUid, "miscTodos", id));
+  };
+
+  const edit = async (id, newText) => {
+    if (!userUid) return;
+    const t = newText.trim();
+    if (!t) return;
+    await updateDoc(doc(db, "users", userUid, "miscTodos", id), { text: t });
+  };
+
+  const clearDone = async () => {
+    if (!userUid) return;
+    const doneOnes = todos.filter((t) => t.done);
+    const batch = writeBatch(db);
+    for (const t of doneOnes) {
+      batch.delete(doc(db, "users", userUid, "miscTodos", t.id));
+    }
+    await batch.commit();
+  };
+
   const remaining = todos.filter((t) => !t.done).length;
 
   return (
@@ -295,7 +433,7 @@ function Row({ item, onToggle, onDelete, onEdit }) {
 }
 
 /* ---------- Finances ---------- */
-const LS_FIN = "finances_v1";
+const LS_FIN = "finances_v1"; // used once to migrate old localStorage data
 function currency(n) {
   try { return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(n || 0); }
   catch { return `$${(n || 0).toFixed(2)}`; }
@@ -308,18 +446,67 @@ function Finances() {
   const [note, setNote] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0,10));
   const [q, setQ] = useState("");
+  const [userUid, setUserUid] = useState(null);
 
-  useEffect(() => { try { const raw = localStorage.getItem(LS_FIN); if (raw) setTxs(JSON.parse(raw)); } catch {} }, []);
-  useEffect(() => { try { localStorage.setItem(LS_FIN, JSON.stringify(txs)); } catch {} }, [txs]);
+  // Sign in anonymously, migrate local data once, then subscribe to Firestore
+  useEffect(() => {
+    let unsub = () => {};
+    ensureUser().then(async (user) => {
+      setUserUid(user.uid);
+      const colRef = collection(db, "users", user.uid, "finances");
 
-  const add = () => {
+      // ----- One-time migration: localStorage -> Firestore (if collection is empty)
+      const snap = await getDocs(colRef);
+      if (snap.empty) {
+        const raw = localStorage.getItem(LS_FIN);
+        if (raw) {
+          const items = JSON.parse(raw);
+          const batch = writeBatch(db);
+          for (const it of items) {
+            batch.set(doc(colRef), {
+              type: it.type ?? "expense",
+              amount: it.amount ?? 0,
+              category: it.category ?? "General",
+              note: it.note ?? "",
+              date: it.date ?? new Date().toISOString().slice(0,10),
+              createdAt: Date.now(),
+              id: undefined, // let Firestore assign id
+            });
+          }
+          await batch.commit();
+        }
+      }
+
+      // ----- Live subscription
+      unsub = onSnapshot(colRef, (qs) => {
+        const data = qs.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (a.createdAt || 0) < (b.createdAt || 0) ? 1 : -1);
+        setTxs(data);
+      });
+    });
+    return () => unsub();
+  }, []);
+
+  // Actions
+  const add = async () => {
     const amt = Number(amount);
-    if (!Number.isFinite(amt) || amt <= 0) return;
-    const tx = { id: uid(), type, amount: amt, category: category.trim() || "General", note: note.trim(), date };
-    setTxs((p) => [tx, ...p]);
+    if (!Number.isFinite(amt) || amt <= 0 || !userUid) return;
+    await addDoc(collection(db, "users", userUid, "finances"), {
+      type,
+      amount: amt,
+      category: category.trim() || "General",
+      note: note.trim(),
+      date,
+      createdAt: Date.now(),
+    });
     setAmount(""); setCategory(""); setNote("");
   };
-  const del = (id) => setTxs((p) => p.filter((t) => t.id !== id));
+
+  const del = async (id) => {
+    if (!userUid) return;
+    await deleteDoc(doc(db, "users", userUid, "finances", id));
+  };
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -402,7 +589,7 @@ function Finances() {
 }
 
 /* ---------- Journal ---------- */
-const LS_JOURNAL = "journal_v1";
+const LS_JOURNAL = "journal_v1"; // used once to migrate old localStorage data
 function parseTags(input) {
   return input.split(",").map(s => s.trim()).filter(Boolean);
 }
@@ -412,34 +599,81 @@ function Journal() {
   const [content, setContent] = useState("");
   const [tagsInput, setTagsInput] = useState("");
   const [q, setQ] = useState("");
+  const [userUid, setUserUid] = useState(null);
 
-  useEffect(() => { try { const raw = localStorage.getItem(LS_JOURNAL); if (raw) setEntries(JSON.parse(raw)); } catch {} }, []);
-  useEffect(() => { try { localStorage.setItem(LS_JOURNAL, JSON.stringify(entries)); } catch {} }, [entries]);
+  // Sign in anonymously, migrate local data once, then subscribe to Firestore
+  useEffect(() => {
+    let unsub = () => {};
+    ensureUser().then(async (user) => {
+      setUserUid(user.uid);
+      const colRef = collection(db, "users", user.uid, "journal");
 
-  const add = () => {
-  const t = title.trim();
-  const c = content.trim();
-  if (!t && !c) return;
-  const tags = parseTags(tagsInput);
-  const now = Date.now();
-  const defaultTitle = new Date(now).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "long",
-    day: "numeric"
-  });
-  setEntries(p => [{
-    id: uid(),
-    title: t || defaultTitle,   // ← use date if no title
-    content: c,
-    tags,
-    createdAt: now,
-    updatedAt: now
-  }, ...p]);
-  setTitle(""); setContent(""); setTagsInput("");
-};
+      // ----- One-time migration: localStorage -> Firestore (if collection is empty)
+      const snap = await getDocs(colRef);
+      if (snap.empty) {
+        const raw = localStorage.getItem(LS_JOURNAL);
+        if (raw) {
+          const items = JSON.parse(raw);
+          const batch = writeBatch(db);
+          for (const it of items) {
+            batch.set(doc(colRef), {
+              title: it.title ?? "Untitled",
+              content: it.content ?? "",
+              tags: it.tags ?? [],
+              createdAt: it.createdAt ?? Date.now(),
+              updatedAt: it.updatedAt ?? Date.now(),
+              id: undefined, // let Firestore assign id
+            });
+          }
+          await batch.commit();
+        }
+      }
 
-  const del = (id) => setEntries(p => p.filter(e => e.id !== id));
-  const save = (id, patch) => setEntries(p => p.map(e => e.id === id ? { ...e, ...patch, updatedAt: Date.now() } : e));
+      // ----- Live subscription
+      unsub = onSnapshot(colRef, (qs) => {
+        const data = qs.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (a.createdAt || 0) < (b.createdAt || 0) ? 1 : -1);
+        setEntries(data);
+      });
+    });
+    return () => unsub();
+  }, []);
+
+  // Actions
+  const add = async () => {
+    const t = title.trim();
+    const c = content.trim();
+    if ((!t && !c) || !userUid) return;
+    const tags = parseTags(tagsInput);
+    const now = Date.now();
+    const defaultTitle = new Date(now).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "long",
+      day: "numeric"
+    });
+    await addDoc(collection(db, "users", userUid, "journal"), {
+      title: t || defaultTitle,
+      content: c,
+      tags,
+      createdAt: now,
+      updatedAt: now,
+    });
+    setTitle(""); setContent(""); setTagsInput("");
+  };
+
+  const del = async (id) => {
+    if (!userUid) return;
+    await deleteDoc(doc(db, "users", userUid, "journal", id));
+  };
+
+  const save = async (id, patch) => {
+    if (!userUid) return;
+    await updateDoc(doc(db, "users", userUid, "journal", id), {
+      ...patch,
+      updatedAt: Date.now(),
+    });
+  };
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -587,42 +821,74 @@ export default function App() {
 }
 
 /* ---------- Schedule ---------- */
-const LS_SCHEDULE = "schedule_v1";
+const LS_SCHEDULE = "schedule_v1"; // used once to migrate old localStorage data
 
 function Schedule() {
   const [blocks, setBlocks] = useState([]);
   const [activity, setActivity] = useState("");
   const [time, setTime] = useState("09:00");
+  const [userUid, setUserUid] = useState(null);
 
-  // Load + Save
+  // Sign in anonymously, migrate local data once, then subscribe to Firestore
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(LS_SCHEDULE);
-      if (raw) setBlocks(JSON.parse(raw));
-    } catch {}
+    let unsub = () => {};
+    ensureUser().then(async (user) => {
+      setUserUid(user.uid);
+      const colRef = collection(db, "users", user.uid, "schedule");
+
+      // ----- One-time migration: localStorage -> Firestore (if collection is empty)
+      const snap = await getDocs(colRef);
+      if (snap.empty) {
+        const raw = localStorage.getItem(LS_SCHEDULE);
+        if (raw) {
+          const items = JSON.parse(raw);
+          const batch = writeBatch(db);
+          for (const it of items) {
+            batch.set(doc(colRef), {
+              time: it.time ?? "09:00",
+              activity: it.activity ?? "",
+              createdAt: Date.now(),
+              id: undefined, // let Firestore assign id
+            });
+          }
+          await batch.commit();
+        }
+      }
+
+      // ----- Live subscription
+      unsub = onSnapshot(colRef, (qs) => {
+        const data = qs.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => a.time.localeCompare(b.time));
+        setBlocks(data);
+      });
+    });
+    return () => unsub();
   }, []);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_SCHEDULE, JSON.stringify(blocks));
-    } catch {}
-  }, [blocks]);
 
-  // Add a block
-  const add = () => {
+  // Actions
+  const add = async () => {
     const a = activity.trim();
-    if (!a) return;
-    setBlocks((prev) => [
-      { id: uid(), time, activity: a },
-      ...prev.sort((x, y) => x.time.localeCompare(y.time)),
-    ]);
+    if (!a || !userUid) return;
+    await addDoc(collection(db, "users", userUid, "schedule"), {
+      time,
+      activity: a,
+      createdAt: Date.now(),
+    });
     setActivity("");
   };
 
-  const del = (id) => setBlocks((prev) => prev.filter((b) => b.id !== id));
-  const edit = (id, newActivity) =>
-    setBlocks((prev) =>
-      prev.map((b) => (b.id === id ? { ...b, activity: newActivity } : b))
-    );
+  const del = async (id) => {
+    if (!userUid) return;
+    await deleteDoc(doc(db, "users", userUid, "schedule", id));
+  };
+
+  const edit = async (id, newActivity) => {
+    if (!userUid) return;
+    const a = newActivity.trim();
+    if (!a) return;
+    await updateDoc(doc(db, "users", userUid, "schedule", id), { activity: a });
+  };
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
